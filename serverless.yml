@@ -1,0 +1,161 @@
+frameworkVersion: '3'
+service: ejercicio-sls
+owner: RicardoMaggi
+
+plugins:
+  - serverless-iam-roles-per-function
+
+provider:
+  name: aws
+  runtime: nodejs16.x
+  region: us-east-1
+  stage: dev
+
+functions:
+
+  CreateClient:
+    handler: create-client/create-client.handler
+    name: ${self:owner}-${self:service}-${self:provider.stage}-create-client-function
+    environment:
+      CLIENTS_TABLE: !Ref ClientsTable
+      CLIENTS_CREATED_TOPIC: !Ref ClientCreatedTopic
+    iamRoleStatementsInherit: true
+    iamRoleStatements: 
+      - Effect: Allow
+        Action:
+          - sns:Publish
+        Resource:
+          - !Ref ClientCreatedTopic
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource:
+          - !GetAtt ClientsTable.Arn
+    events:
+      - http:
+          path: /client
+          method: post
+          cors: true
+
+  CreateCard:
+    handler: create-card/create-card.handler
+    name: ${self:owner}-${self:service}-${self:provider.stage}-create-card-function
+    environment:
+      CLIENTS_TABLE: !Ref ClientsTable
+    iamRoleStatementsInherit: true
+    iamRoleStatements: 
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource:
+          - !GetAtt ClientsTable.Arn
+    events:
+      - sqs:
+          arn: !GetAtt CreateCardQueue.Arn
+
+  CreateGift:
+    handler: create-gift/create-gift.handler
+    name: ${self:owner}-${self:service}-${self:provider.stage}-create-gift-function
+    environment:
+      CLIENTS_TABLE: !Ref ClientsTable
+    iamRoleStatementsInherit: true
+    iamRoleStatements: 
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource:
+          - !GetAtt ClientsTable.Arn
+    events:
+      - sqs:
+          arn: !GetAtt CreateGiftQueue.Arn
+    
+resources:
+  Resources:
+
+    ClientsTable:
+      Type: AWS::DynamoDB::Table
+      # DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:owner}-${self:service}-${self:provider.stage}-client-table
+        AttributeDefinitions:
+          - AttributeName: dni
+            AttributeType: S
+        KeySchema:
+          - AttributeName: dni
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+    ClientCreatedTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Client Created Topic
+        TopicName: ${self:owner}-${self:service}-${self:provider.stage}-client-created-topic
+        Subscription:
+          - Protocol: sqs
+            Endpoint: !GetAtt CreateCardQueue.Arn
+          - Protocol: sqs
+            Endpoint: !GetAtt CreateGiftQueue.Arn
+
+    CreateCardQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:owner}-${self:service}-${self:provider.stage}-create-card-queue
+    
+    CreateCardQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties: 
+        PolicyDocument: 
+          Statement:
+            - Effect: Allow
+              Action: 
+                - SQS:*
+              Resource: !GetAtt CreateCardQueue.Arn
+              Principal:
+                AWS:
+                  - !Ref AWS::AccountId
+            - Effect: Allow
+              Principal:
+                AWS: 
+                  - '*'
+              Action: 
+                - SQS:SendMessage
+              Resource: !GetAtt CreateCardQueue.Arn
+              Condition:
+                ArnLike:
+                  aws:SourceArn:
+                    - !Ref ClientCreatedTopic
+        Queues: 
+          - !Ref CreateCardQueue
+
+    CreateGiftQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:owner}-${self:service}-${self:provider.stage}-create-gift-queue
+    
+    CreateGiftQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties: 
+        PolicyDocument: 
+          Statement:
+            - Effect: Allow
+              Action: 
+                - SQS:*
+              Resource: !GetAtt CreateGiftQueue.Arn
+              Principal:
+                AWS:
+                  - !Ref AWS::AccountId
+            - Effect: Allow
+              Principal:
+                AWS: 
+                  - '*'
+              Action: 
+                - SQS:SendMessage
+              Resource: !GetAtt CreateGiftQueue.Arn
+              Condition:
+                ArnLike:
+                  aws:SourceArn:
+                    - !Ref ClientCreatedTopic
+        Queues: 
+          - !Ref CreateGiftQueue
